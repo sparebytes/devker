@@ -1,0 +1,18 @@
+{
+  "version": "0.3.0",
+  "name": "devker",
+  "description": "CLI to help manage docker-compose database containers for local development.",
+  "keywords": ["docker", "docker-compose", "dev", "database"],
+  "license": "Unlicense",
+  "bin": "./bin/devker.js",
+  "repository": {
+    "type" : "git",
+    "url" : "https://github.com/sparebytes/devker.git"
+  },
+  "dependencies": {
+    "@yarnpkg/shell": "^2.0.0-rc.8",
+    "clipanion": "~2.1.6",
+    "dotenv": "^8.2.0",
+    "uuid": "^3.4.0"
+  }
+}

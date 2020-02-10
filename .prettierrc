@@ -1,0 +1,8 @@
+# .prettierrc
+printWidth: 130
+useTabs: false
+tabWidth: 2
+semi: true
+trailingComma: all
+arrowParens: always
+htmlWhitespaceSensitivity: ignore
