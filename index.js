@@ -3,6 +3,7 @@ const { Cli, Command } = require("clipanion");
 const fs = require("fs");
 const { promises: fsp } = fs;
 const _path = require("path");
+const { Transform } = require("stream");
 const uuidv4 = require("uuid/v4");
 require("dotenv").config();
 
@@ -130,8 +131,8 @@ class RestoreCommand extends PostgresCommand {
     const filename = `${this.filename || "latest"}.sql.gz`;
     const execOptions = {
       cwd: this.cwd,
-      stdout: verbose ? this.context.stdout : null,
-      stderr: quiet ? null : this.context.stderr,
+      stdout: verbose ? this.context.stdout : getStreamSink(),
+      stderr: quiet ? getStreamSink() : this.context.stderr,
     };
     console["log"](`Restoring database from ${filename}`);
     const initdbSql = makeInitializeDbScript(psqlEnv);
@@ -268,4 +269,13 @@ function escapeBashString(input) {
     .replace(/"/g, `\\"`)
     .replace(/\r\n/g, `\\n`)
     .replace(/[\r\n]/g, `\\n`);
+}
+
+function getStreamSink() {
+  var ws = Transform();
+  ws._transform = (chunk, enc, next) => {
+    next();
+  };
+  ws._flush = () => {};
+  return ws;
 }
