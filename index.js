@@ -122,10 +122,17 @@ PostgresPsqlCommand.addPath(`postgres`, `psql`);
 class RestoreCommand extends PostgresCommand {
   filename;
   verbose = false;
+  quiet = false;
   async execute() {
+    const quiet = this.quiet;
+    const verbose = this.verbose && !this.quiet;
     const psqlEnv = getPostgresEnv("APP_PSQL_");
     const filename = `${this.filename || "latest"}.sql.gz`;
-    const stdout = this.verbose ? this.context.stdout : null;
+    const execOptions = {
+      cwd: this.cwd,
+      stdout: verbose ? this.context.stdout : null,
+      stderr: quiet ? null : this.context.stderr,
+    };
     console["log"](`Restoring database from ${filename}`);
     const initdbSql = makeInitializeDbScript(psqlEnv);
     if (this.verbose) {
@@ -134,15 +141,16 @@ class RestoreCommand extends PostgresCommand {
         console["log"](" ", line);
       }
     }
-    await bashRun(this.service, `printf "${escapeBashString(initdbSql)}" | PGDATABASE=postgres psql`, { stdout, cwd: this.cwd });
+    await bashRun(this.service, `printf "${escapeBashString(initdbSql)}" | PGDATABASE=postgres psql`, execOptions);
     console["log"](`  ... db ${psqlEnv.dbname} dropped and re-created`);
-    await bashRun(this.service, `gunzip -c /root/db-dumps/${filename} | psql`, { stdout, cwd: this.cwd });
+    await bashRun(this.service, `gunzip -c /root/db-dumps/${filename} | psql`, execOptions);
     console["log"](`  ... ${filename} executed`);
   }
 }
 RestoreCommand.addPath(`postgres`, `restore`);
 RestoreCommand.addOption("filename", Command.String("-f,--filename"));
 RestoreCommand.addOption("verbose", Command.Boolean("--verbose"));
+RestoreCommand.addOption("quiet", Command.Boolean("-q,--quiet"));
 
 // postgres dump
 class DumpCommand extends PostgresCommand {
@@ -182,7 +190,7 @@ async function bashRun(service, cmd, options) {
 
 async function spawnPromise(command, args1, args2, options) {
   const commandString = commandArrayToString(command, args1);
-  const exitCode = await execute(commandString, args2 || [], { cwd: options.cwd });
+  const exitCode = await execute(commandString, args2 || [], options);
   if (exitCode !== 0) {
     throw new Error("Command exited with non-zero code of " + exitCode);
   }
