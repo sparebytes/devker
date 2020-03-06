@@ -105,18 +105,22 @@ class PostgresCommand extends DockerComposeServiceCommand {
 
 // postgres ssh
 class PostgresSshCommand extends PostgresCommand {
+  rest
   async execute() {
-    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-l"], [], { cwd: this.cwd });
+    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-l", ...this.rest], [], { cwd: this.cwd });
   }
 }
+PostgresSshCommand.addOption("rest", Command.Rest());
 PostgresSshCommand.addPath(`postgres`, `ssh`);
 
 // postgres psql
 class PostgresPsqlCommand extends PostgresCommand {
+  rest
   async execute() {
-    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-c", `psql -U mc`], [], { cwd: this.cwd });
+    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-c", `psql`, ...this.rest], [], { cwd: this.cwd });
   }
 }
+PostgresPsqlCommand.addOption("rest", Command.Rest());
 PostgresPsqlCommand.addPath(`postgres`, `psql`);
 
 // postgres restore

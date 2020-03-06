@@ -1,13 +1,19 @@
 {
-  "version": "0.3.2",
+  "version": "0.3.3",
   "name": "devker",
   "description": "CLI to help manage docker-compose database containers for local development.",
-  "keywords": ["docker", "docker-compose", "dev", "database"],
+  "keywords": [
+    "docker",
+    "docker-compose",
+    "dev",
+    "database"
+  ],
+  "author": "Franklin Davenport <sparebytes@gmail.com>",
   "license": "Unlicense",
   "bin": "./bin/devker.js",
   "repository": {
-    "type" : "git",
-    "url" : "https://github.com/sparebytes/devker.git"
+    "type": "git",
+    "url": "https://github.com/sparebytes/devker.git"
   },
   "dependencies": {
     "@yarnpkg/shell": "^2.0.0-rc.8",
