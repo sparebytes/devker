@@ -1,4 +1,4 @@
-require("dotenv-expand")(require("dotenv-flow").config());
+const envFromFile = require("dotenv-expand")(require("dotenv-flow").config());
 const { execute } = require("@yarnpkg/shell");
 const { Cli, Command } = require("clipanion");
 const fs = require("fs");
@@ -27,6 +27,22 @@ class VersionCommand extends Command {
   }
 }
 VersionCommand.addPath("version");
+
+// print env
+class PrintEnvCommand extends Command {
+  async execute() {
+    const { stdout } = this.context;
+    const parsed = envFromFile.parsed;
+    for (const k in parsed) {
+      const value = parsed[k];
+      stdout.write(k);
+      stdout.write("=");
+      stdout.write(value);
+      stdout.write("\n");
+    }
+  }
+}
+PrintEnvCommand.addPath("print", "env");
 
 // BaseCommand
 class BaseCommand extends Command {
@@ -214,7 +230,9 @@ class PostgresRestoreCommand extends PostgresCommand {
           const filename = `${connection.dbname}/${this.filename || "latest"}.sql${this.noGzip ? "" : ".gz"}`;
           console["log"]("Droping and Recreating Database:", connection.dbname);
           await execSql(
-            `${killConnectionsSql(connection.dbname)};\ndrop database if exists "${connection.dbname}";create database "${connection.dbname}";`,
+            `${killConnectionsSql(connection.dbname)};\ndrop database if exists "${connection.dbname}";create database "${
+              connection.dbname
+            }";`,
             {
               ...execOptions,
               stdout: getStreamSink(),
@@ -318,6 +336,7 @@ const cli = new Cli({
 });
 cli.register(HelpCommand);
 cli.register(VersionCommand);
+cli.register(PrintEnvCommand);
 cli.register(InitCommand);
 cli.register(BashCommand);
 cli.register(DockerComposeCommand);
