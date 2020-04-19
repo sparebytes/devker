@@ -105,12 +105,15 @@ BaseCommand.addOption("cwd", Command.String("--cwd"));
 class SshCommand extends BaseCommand {
   service;
   rest;
+  bash = false;
   async execute() {
-    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-l", ...this.rest], [], { cwd: this.cwd });
+    const shellLogin = this.bash ? ["bash", "-l"] : ["sh"];
+    return spawnPromise("docker-compose", ["exec", this.service, ...shellLogin, ...this.rest], [], { cwd: this.cwd });
   }
 }
 SshCommand.addPath(`ssh`);
 SshCommand.addOption("service", Command.String({ required: true }));
+SshCommand.addOption("bash", Command.Boolean("--bash"));
 SshCommand.addOption("rest", Command.Rest());
 
 // DockerComposeServiceCommand
