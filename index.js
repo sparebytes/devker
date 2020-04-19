@@ -195,6 +195,7 @@ class PostgresRestoreCommand extends PostgresCommand {
   filename;
   verbose = false;
   quiet = false;
+  noGzip = false;
   async execute() {
     const quiet = this.quiet;
     const verbose = this.verbose && !this.quiet;
@@ -204,7 +205,7 @@ class PostgresRestoreCommand extends PostgresCommand {
     let errored = false;
     for (const connection of matchingConnections) {
       try {
-        const filename = `${connection.dbname}/${this.filename || "latest"}.sql.gz`;
+        const filename = `${connection.dbname}/${this.filename || "latest"}.sql${this.noGzip ? "" : ".gz"}`;
         const execOptions = {
           cwd: this.cwd,
           stdout: verbose ? this.context.stdout : getStreamSink(),
@@ -225,7 +226,8 @@ class PostgresRestoreCommand extends PostgresCommand {
         }
         await postgresExecuteSql(this.service, initdbSql, superuser, execOptions);
         console["log"](`Restoring database from ${filename}`);
-        await bashRun(this.service, `gunzip -c /root/db-dumps/${filename} | psql -U ${superuser}`, execOptions);
+        const readCommand = this.noGzip ? `cat /root/db-dumps/${filename}` : `gunzip -c /root/db-dumps/${filename}`;
+        await bashRun(this.service, `${readCommand} | psql -U ${superuser}`, execOptions);
         console["log"](`  ... ${filename} executed`);
       } catch (error) {
         errored = true;
@@ -242,11 +244,13 @@ PostgresRestoreCommand.addOption("username", Command.String("-u,--username"));
 PostgresRestoreCommand.addOption("filename", Command.String("-f,--filename"));
 PostgresRestoreCommand.addOption("verbose", Command.Boolean("--verbose"));
 PostgresRestoreCommand.addOption("quiet", Command.Boolean("-q,--quiet"));
+PostgresRestoreCommand.addOption("noGzip", Command.Boolean("--no-gz"));
 
 // postgres dump
 class PostgresDumpCommand extends PostgresCommand {
   dbnames = [];
   filename;
+  noGzip = false;
   async execute() {
     const postgresEnv = this.postgresEnv;
     const superuser = postgresEnv.super.username;
@@ -256,10 +260,10 @@ class PostgresDumpCommand extends PostgresCommand {
       try {
         console["log"]("Dumping Database:", connection.dbname);
         const name = this.filename || `dump-${new Date().toISOString().replace(/:/g, "-")}`;
-        const dumpPath = posix.normalize(`/root/db-dumps/${connection.dbname}/${name}.sql.gz`);
+        const dumpPath = posix.normalize(`/root/db-dumps/${connection.dbname}/${name}.sql${this.noGzip ? "" : ".gz"}`);
         const dumpDir = posix.dirname(dumpPath);
         await bashRun(this.service, `mkdir -p ${dumpDir}`, { cwd: this.cwd });
-        await bashRun(this.service, `pg_dump -U ${superuser} | gzip > ${dumpPath}`, { cwd: this.cwd });
+        await bashRun(this.service, `pg_dump -U ${superuser} ${this.noGzip ? "" : "| gzip"} > ${dumpPath}`, { cwd: this.cwd });
         console["log"]("  ", dumpPath);
       } catch (error) {
         errored = true;
@@ -270,9 +274,10 @@ class PostgresDumpCommand extends PostgresCommand {
     return errored ? 1 : 0;
   }
 }
-PostgresDumpCommand.addOption("dbnames", Command.Array("-d,--db"));
 PostgresDumpCommand.addPath(`postgres`, `dump`);
+PostgresDumpCommand.addOption("dbnames", Command.Array("-d,--db"));
 PostgresDumpCommand.addOption("filename", Command.String("-f,--filename"));
+PostgresDumpCommand.addOption("noGzip", Command.Boolean("--no-gz"));
 
 // postgres list connections
 class PostgresListConnectionCommand extends PostgresCommand {
