@@ -26,8 +26,13 @@
     "uuid": "^7.0.3"
   },
   "scripts": {
+    "lint": "eslint **/*.js",
     "try": "cd try && node ../cli.js",
     "try-begin": "(yarn try-end || echo ...) && node cli.js init try --overwrite && yarn try up",
     "try-end": "cd try && yarn try destroy"
+  },
+  "devDependencies": {
+    "babel-eslint": "^10.1.0",
+    "eslint": "^6.8.0"
   }
 }
