@@ -1,36 +1,42 @@
-const envFromFile = require("dotenv-expand")(require("dotenv-flow").config());
-const { execute } = require("@yarnpkg/shell");
-const { Cli, Command } = require("clipanion");
-const fs = require("fs");
-const { promises: fsp } = fs;
-const _path = require("path");
-const { posix } = _path;
-const { Transform } = require("stream");
-const { capitalCase, constantCase, paramCase, snakeCase } = require("change-case");
-const uuidGenerator = require("uuid");
-const passwordGenerator = require("generate-password");
+import { execute } from "@yarnpkg/shell";
+import { capitalCase, constantCase, paramCase, snakeCase } from "change-case";
+import { Cli, Command } from "clipanion";
+import "core-js/stable";
+import * as fs from "fs";
+import { promises as fsp } from "fs";
+import * as passwordGenerator from "generate-password";
+import * as _path from "path";
+import { posix } from "path";
+import preval from "preval.macro";
+import "regenerator-runtime/runtime";
+import { Transform } from "stream";
+import * as uuidGenerator from "uuid";
+import loadEnv from "./load-env";
 
-const devkerVersion = require("./package.json").version;
+const devkerVersion = preval`module.exports = require("../package.json").version`;
+const envFromFile = loadEnv();
 
 // help
 class HelpCommand extends Command {
+  @Command.Path("help")
+  @Command.Path("-h")
+  @Command.Path("--help")
   async execute() {
     this.context.stdout.write(this.cli.usage(null));
   }
 }
-HelpCommand.addPath("--help");
-HelpCommand.addPath("-h");
 
 // version
 class VersionCommand extends Command {
+  @Command.Path("version")
   async execute() {
     this.context.stdout.write(devkerVersion + "\n");
   }
 }
-VersionCommand.addPath("version");
 
 // print env
 class PrintEnvCommand extends Command {
+  @Command.Path("print", "env")
   async execute() {
     const parsed = envFromFile.parsed;
     for (const k in parsed) {
@@ -38,13 +44,22 @@ class PrintEnvCommand extends Command {
     }
   }
 }
-PrintEnvCommand.addPath("print", "env");
 
 // generate password
 class GeneratePasswordCommand extends Command {
+  @Command.String("-c,--count")
   count = 1;
+
+  @Command.String("-l,--length")
   length = 10;
+
+  @Command.String("-e,--exclude")
   exclude = "";
+
+  @Command.Rest()
+  flags = [];
+
+  @Command.Path("generate", "password")
   async execute() {
     const flags = new Set(["numbers", "uppercase"]);
     for (const flag of this.flags) {
@@ -69,16 +84,16 @@ class GeneratePasswordCommand extends Command {
     }
   }
 }
-GeneratePasswordCommand.addPath("generate", "password");
-GeneratePasswordCommand.addOption("count", Command.String("-c,--count"));
-GeneratePasswordCommand.addOption("length", Command.String("-l,--length"));
-GeneratePasswordCommand.addOption("exclude", Command.String("-e,--exclude"));
-GeneratePasswordCommand.addOption("flags", Command.Rest());
 
 // generate password
 class GenerateUuidCommand extends Command {
+  @Command.String("-c,--count")
   count = 1;
+
+  @Command.Rest()
   rest = [];
+
+  @Command.Path("generate", "uuid")
   async execute() {
     const version = this.rest[0] || "v4";
     const uuidGen = uuidGenerator[version];
@@ -91,42 +106,49 @@ class GenerateUuidCommand extends Command {
     }
   }
 }
-GenerateUuidCommand.addPath("generate", "uuid");
-GenerateUuidCommand.addOption("count", Command.String("-c,--count"));
-GenerateUuidCommand.addOption("rest", Command.Rest());
 
 // BaseCommand
 class BaseCommand extends Command {
+  @Command.String("--cwd")
   cwd = process.cwd();
 }
-BaseCommand.addOption("cwd", Command.String("--cwd"));
 
 // ssh
 class SshCommand extends BaseCommand {
+  @Command.String({ required: true })
   service;
-  rest;
+
+  @Command.Boolean("--bash")
   bash = false;
+
+  @Command.Rest()
+  rest;
+
+  @Command.Path(`ssh`)
   async execute() {
     const shellLogin = this.bash ? ["bash", "-l"] : ["sh"];
     return spawnPromise("docker-compose", ["exec", this.service, ...shellLogin, ...this.rest], [], { cwd: this.cwd });
   }
 }
-SshCommand.addPath(`ssh`);
-SshCommand.addOption("service", Command.String({ required: true }));
-SshCommand.addOption("bash", Command.Boolean("--bash"));
-SshCommand.addOption("rest", Command.Rest());
 
 // DockerComposeServiceCommand
 class DockerComposeServiceCommand extends BaseCommand {
+  @Command.String("-s,--service")
   service;
 }
-DockerComposeServiceCommand.addOption("service", Command.String("-s,--service"));
 
 // env init
 class InitCommand extends BaseCommand {
+  @Command.String({ required: true })
   dir = undefined;
+
+  @Command.Boolean("-n,--name")
   name = "My App";
+
+  @Command.Boolean("--overwrite")
   overwrite = false;
+
+  @Command.Path(`init`)
   async execute() {
     if (!this.dir) {
       throw new Error("dir argument is required");
@@ -158,67 +180,73 @@ class InitCommand extends BaseCommand {
     return errored ? 1 : 0;
   }
 }
-InitCommand.addPath(`init`);
-InitCommand.addOption("dir", Command.String({ required: true }));
-InitCommand.addOption("name", Command.Boolean("-n,--name"));
-InitCommand.addOption("overwrite", Command.Boolean("--overwrite"));
 
 // bash
 class BashCommand extends BaseCommand {
+  @Command.String({ required: true })
   service;
+
+  @Command.Proxy()
   command;
+
+  @Command.Path(`bash`)
   async execute() {
     await bashRun(this.service, this.command[0] || "", { cwd: this.cwd });
   }
 }
-BashCommand.addPath(`bash`);
-BashCommand.addOption("service", Command.String({ required: true }));
-BashCommand.addOption("command", Command.Proxy());
 
 // docker-compose
 class DockerComposeCommand extends BaseCommand {
+  @Command.Rest()
   rest;
+
+  @Command.Path(`docker-compose`)
   async execute() {
     await spawnPromise("docker-compose", this.rest, [], { cwd: this.cwd });
   }
 }
-DockerComposeCommand.addPath(`docker-compose`);
-DockerComposeCommand.addOption("rest", Command.Rest());
 
 // up
 class UpCommand extends BaseCommand {
+  @Command.Rest()
   rest;
+
+  @Command.Path(`up`)
   async execute() {
     await spawnPromise("docker-compose", ["up", "-d", ...this.rest], [], { cwd: this.cwd });
   }
 }
-UpCommand.addPath(`up`);
-UpCommand.addOption("rest", Command.Rest());
 
 // down
 class DownCommand extends BaseCommand {
+  @Command.Rest()
   rest;
+
+  @Command.Path(`down`)
   async execute() {
     await spawnPromise("docker-compose", ["down", ...this.rest], [], { cwd: this.cwd });
   }
 }
-DownCommand.addPath(`down`);
-DownCommand.addOption("rest", Command.Rest());
 
 // destroy
 class DestroyCommand extends BaseCommand {
+  @Command.Rest()
   rest;
+
+  @Command.Path(`destroy`)
   async execute() {
     await spawnPromise("docker-compose", ["down", "-v", "--remove-orphans", ...this.rest], [], { cwd: this.cwd });
   }
 }
-DestroyCommand.addPath(`destroy`);
-DestroyCommand.addOption("rest", Command.Rest());
 
 // PostgressCommand
 class PostgresCommand extends DockerComposeServiceCommand {
+  @Command.String("-s,--service")
   service = "postgres";
+
+  @Command.String("--env-prefix")
   _envVarPrefix = "";
+
   get envVarPrefix() {
     return this._envVarPrefix || constantCase(`DEVKER_${this.service}`) + "_";
   }
@@ -238,13 +266,16 @@ class PostgresCommand extends DockerComposeServiceCommand {
     return matchingConnections;
   }
 }
-PostgresCommand.addOption("service", Command.String("-s,--service"));
-PostgresCommand.addOption("envPrefix", Command.String("--env-prefix"));
 
 // postgres psql
 class PostgresPsqlCommand extends PostgresCommand {
+  @Command.String("-U,--username")
   username;
+
+  @Command.Rest()
   rest;
+
+  @Command.Path(`postgres`, `psql`)
   async execute() {
     const psqlEnv = this.postgresEnv;
     const username = this.username || psqlEnv.super.username || "postgres";
@@ -256,17 +287,28 @@ class PostgresPsqlCommand extends PostgresCommand {
     );
   }
 }
-PostgresPsqlCommand.addOption("username", Command.String("-U,--username"));
-PostgresPsqlCommand.addOption("rest", Command.Rest());
-PostgresPsqlCommand.addPath(`postgres`, `psql`);
 
 // postgres restore
 class PostgresRestoreCommand extends PostgresCommand {
+  @Command.Array("-d,--db")
   dbnames = [];
+
+  @Command.String("-f,--filename")
   filename;
+
+  @Command.String("-u,--username")
+  username;
+
+  @Command.Boolean("--verbose")
   verbose = false;
+
+  @Command.Boolean("-q,--quiet")
   quiet = false;
+
+  @Command.Boolean("--no-gz")
   noGzip = false;
+
+  @Command.Path(`postgres`, `restore`)
   async execute() {
     const quiet = this.quiet;
     const verbose = this.verbose && !this.quiet;
@@ -319,19 +361,19 @@ class PostgresRestoreCommand extends PostgresCommand {
     return errored ? 1 : 0;
   }
 }
-PostgresRestoreCommand.addPath(`postgres`, `restore`);
-PostgresRestoreCommand.addOption("dbnames", Command.Array("-d,--db"));
-PostgresRestoreCommand.addOption("username", Command.String("-u,--username"));
-PostgresRestoreCommand.addOption("filename", Command.String("-f,--filename"));
-PostgresRestoreCommand.addOption("verbose", Command.Boolean("--verbose"));
-PostgresRestoreCommand.addOption("quiet", Command.Boolean("-q,--quiet"));
-PostgresRestoreCommand.addOption("noGzip", Command.Boolean("--no-gz"));
 
 // postgres dump
 class PostgresDumpCommand extends PostgresCommand {
+  @Command.Array("-d,--db")
   dbnames = [];
+
+  @Command.String("-f,--filename")
   filename;
+
+  @Command.Boolean("--no-gz")
   noGzip = false;
+
+  @Command.Path(`postgres`, `dump`)
   async execute() {
     const postgresEnv = this.postgresEnv;
     const superuser = postgresEnv.super.username;
@@ -358,13 +400,10 @@ class PostgresDumpCommand extends PostgresCommand {
     return errored ? 1 : 0;
   }
 }
-PostgresDumpCommand.addPath(`postgres`, `dump`);
-PostgresDumpCommand.addOption("dbnames", Command.Array("-d,--db"));
-PostgresDumpCommand.addOption("filename", Command.String("-f,--filename"));
-PostgresDumpCommand.addOption("noGzip", Command.Boolean("--no-gz"));
 
 // postgres list connections
 class PostgresListConnectionCommand extends PostgresCommand {
+  @Command.Path(`postgres`, `list`, `connections`)
   async execute() {
     for (const connection of this.postgresEnv.connections) {
       console["log"](
@@ -373,15 +412,14 @@ class PostgresListConnectionCommand extends PostgresCommand {
     }
   }
 }
-PostgresListConnectionCommand.addPath(`postgres`, `list`, `connections`);
 
 // postgres kill connections
 class PostgresKillConnectionCommand extends PostgresCommand {
+  @Command.Path(`postgres`, `kill`, `connections`)
   async execute() {
     await postgresExecuteSql(this.service, killConnectionsSql(), this.postgresEnv.super.username, { cwd: this.cwd });
   }
 }
-PostgresKillConnectionCommand.addPath(`postgres`, `kill`, `connections`);
 
 // ...
 const cli = new Cli({

@@ -1,3 +1,13 @@
-node_modules
+.babelrc.js
+.eslintignore
+.eslintrc.js
 .prettierrc
+.vscode
+*.log
+babel.config.js
+jsconfig.json
+node_modules
+src
+try
 yarn.lock
+/*.tgz
