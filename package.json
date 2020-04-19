@@ -1,5 +1,5 @@
 {
-  "version": "1.2.3",
+  "version": "1.2.4",
   "name": "devker",
   "description": "CLI to help manage docker-compose database containers for local development.",
   "keywords": [
