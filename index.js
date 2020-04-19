@@ -7,7 +7,7 @@ const _path = require("path");
 const { posix } = _path;
 const { Transform } = require("stream");
 const { capitalCase, constantCase, paramCase, snakeCase } = require("change-case");
-const uuidv4 = require("uuid/v4");
+const { v4: uuidv4 } = require("uuid");
 
 const devkerVersion = require("./package.json").version;
 
@@ -199,50 +199,50 @@ class PostgresRestoreCommand extends PostgresCommand {
   async execute() {
     const quiet = this.quiet;
     const verbose = this.verbose && !this.quiet;
+    const execOptions = {
+      cwd: this.cwd,
+      stdout: verbose ? this.context.stdout : getStreamSink(),
+      stderr: quiet ? getStreamSink() : this.context.stderr,
+    };
     const postgresEnv = this.postgresEnv;
     const superuser = postgresEnv.super.username;
     const matchingConnections = this.findMatchingConnections({ filters: this.dbnames, postgresEnv });
     let errored = false;
-    for (const connection of matchingConnections) {
-      try {
-        const filename = `${connection.dbname}/${this.filename || "latest"}.sql${this.noGzip ? "" : ".gz"}`;
-        const execOptions = {
-          cwd: this.cwd,
-          stdout: verbose ? this.context.stdout : getStreamSink(),
-          stderr: quiet ? getStreamSink() : this.context.stderr,
-        };
-        console["log"]("Dropping Database:", connection.dbname);
-        await postgresExecuteSql(this.service, killConnectionsSql, superuser, {
-          ...execOptions,
-          stdout: getStreamSink(),
-          stderr: getStreamSink(),
-        });
-        await bashRun(this.service, `dropdb -U ${superuser} --if-exists ${connection.dbname}`, execOptions);
-        console["log"]("Creating Database:", connection.dbname);
-        await bashRun(this.service, `createdb -U ${superuser} ${connection.dbname}`, execOptions);
-        if (connection.username) {
-          console["log"]("Creating Role:", connection.username);
-          const initdbSql = initializeRoleSql(connection);
-          if (this.verbose) {
-            console["log"]("Executing SQL:");
-            for (const line of initdbSql.split(/[\r\n]+/)) {
-              console["log"](" ", line);
+    await useTemporaryDb(this.service, superuser, execOptions, async (tmpdb, execSql) => {
+      for (const connection of matchingConnections) {
+        try {
+          const filename = `${connection.dbname}/${this.filename || "latest"}.sql${this.noGzip ? "" : ".gz"}`;
+          console["log"]("Droping and Recreating Database:", connection.dbname);
+          await execSql(
+            `${killConnectionsSql(connection.dbname)};\ndrop database if exists "${connection.dbname}";create database "${connection.dbname}";`,
+            {
+              ...execOptions,
+              stdout: getStreamSink(),
+              stderr: getStreamSink(),
+            },
+          );
+          if (connection.username) {
+            console["log"]("Creating Role:", connection.username);
+            const initdbSql = initializeRoleSql(connection);
+            if (this.verbose) {
+              console["log"]("Executing SQL:");
+              console["log"](initdbSql);
             }
+            await execSql(initdbSql);
+          } else {
+            console.warn("Creating Role: Skipped becuase username is empty!");
           }
-          await postgresExecuteSql(this.service, initdbSql, superuser, execOptions);
-        } else {
-          console.warn("Creating Role: Skipped becuase username is empty!");
+          console["log"](`Restoring database from ${filename}`);
+          const readCommand = this.noGzip ? `cat /root/db-dumps/${filename}` : `gunzip -c /root/db-dumps/${filename}`;
+          await bashRun(this.service, `${readCommand} | psql -U ${superuser} --dbname ${connection.dbname}`, execOptions);
+          console["log"](`  ... ${filename} executed`);
+        } catch (error) {
+          errored = true;
+          console.error(error);
+          console.error("Error while restoring database:", connection.dbname);
         }
-        console["log"](`Restoring database from ${filename}`);
-        const readCommand = this.noGzip ? `cat /root/db-dumps/${filename}` : `gunzip -c /root/db-dumps/${filename}`;
-        await bashRun(this.service, `${readCommand} | psql -U ${superuser} --dbname ${connection.dbname}`, execOptions);
-        console["log"](`  ... ${filename} executed`);
-      } catch (error) {
-        errored = true;
-        console.error(error);
-        console.error("Error while restoring database:", connection.dbname);
       }
-    }
+    });
     return errored ? 1 : 0;
   }
 }
@@ -305,7 +305,7 @@ PostgresListConnectionCommand.addPath(`postgres`, `list`, `connections`);
 // postgres kill connections
 class PostgresKillConnectionCommand extends PostgresCommand {
   async execute() {
-    await postgresExecuteSql(this.service, killConnectionsSql, this.postgresEnv.super.username, { cwd: this.cwd });
+    await postgresExecuteSql(this.service, killConnectionsSql(), this.postgresEnv.super.username, { cwd: this.cwd });
   }
 }
 PostgresKillConnectionCommand.addPath(`postgres`, `kill`, `connections`);
@@ -471,12 +471,34 @@ function getStreamSink() {
   return ws;
 }
 
-async function postgresExecuteSql(service, sql, superuser, execOptions) {
+async function postgresExecuteSql(service, superuser, dbname, sql, execOptions) {
   const escapedSql = escapeBashString(sql);
-  await bashRun(service, `printf "${escapedSql}" | psql -U ${superuser || "postgres"}`, execOptions);
+  await bashRun(service, `printf "${escapedSql}" | psql -U ${superuser || "postgres"} --dbname ${dbname}`, execOptions);
 }
 
-const killConnectionsSql = `
+async function useTemporaryDb(service, superuser, execOptions, callback) {
+  const quietExecOptions = {
+    ...execOptions,
+    stdout: getStreamSink(),
+    stderr: getStreamSink(),
+  };
+  const tmpDbname = `tmpdb_${uuidv4().slice(0, 8)}`;
+  const execSql = async (sql, _execOptions) => {
+    _execOptions = { execOptions, ..._execOptions };
+    await postgresExecuteSql(service, superuser, tmpDbname, sql, execOptions);
+  };
+  try {
+    await bashRun(service, `createdb -U ${superuser} ${tmpDbname}`, quietExecOptions);
+    await callback(tmpDbname, execSql);
+  } finally {
+    await bashRun(service, `dropdb -U ${superuser} --if-exists ${tmpDbname}`, quietExecOptions);
+  }
+}
+
+function killConnectionsSql(dbname) {
+  const dbnameClause = dbname ? ` AND datname = '${dbname}' ` : "";
+  return `
 -- Kill all connections except this one
-SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid();
+SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() ${dbnameClause};
 `;
+}
