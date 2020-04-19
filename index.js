@@ -101,9 +101,20 @@ class BaseCommand extends Command {
 }
 BaseCommand.addOption("cwd", Command.String("--cwd"));
 
+// ssh
+class SshCommand extends BaseCommand {
+  service;
+  rest;
+  async execute() {
+    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-l", ...this.rest], [], { cwd: this.cwd });
+  }
+}
+SshCommand.addPath(`ssh`);
+SshCommand.addOption("service", Command.String({ required: true }));
+SshCommand.addOption("rest", Command.Rest());
+
 // DockerComposeServiceCommand
 class DockerComposeServiceCommand extends BaseCommand {
-  cwd = process.cwd();
   service;
 }
 DockerComposeServiceCommand.addOption("service", Command.String("-s,--service"));
@@ -226,16 +237,6 @@ class PostgresCommand extends DockerComposeServiceCommand {
 }
 PostgresCommand.addOption("service", Command.String("-s,--service"));
 PostgresCommand.addOption("envPrefix", Command.String("--env-prefix"));
-
-// postgres ssh
-class PostgresSshCommand extends PostgresCommand {
-  rest;
-  async execute() {
-    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-l", ...this.rest], [], { cwd: this.cwd });
-  }
-}
-PostgresSshCommand.addOption("rest", Command.Rest());
-PostgresSshCommand.addPath(`postgres`, `ssh`);
 
 // postgres psql
 class PostgresPsqlCommand extends PostgresCommand {
@@ -390,6 +391,7 @@ cli.register(VersionCommand);
 cli.register(PrintEnvCommand);
 cli.register(GeneratePasswordCommand);
 cli.register(GenerateUuidCommand);
+cli.register(SshCommand);
 cli.register(InitCommand);
 cli.register(BashCommand);
 cli.register(DockerComposeCommand);
@@ -398,7 +400,6 @@ cli.register(DownCommand);
 cli.register(DestroyCommand);
 cli.register(PostgresRestoreCommand);
 cli.register(PostgresDumpCommand);
-cli.register(PostgresSshCommand);
 cli.register(PostgresPsqlCommand);
 cli.register(PostgresListConnectionCommand);
 cli.register(PostgresKillConnectionCommand);
