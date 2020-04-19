@@ -1,0 +1,25 @@
+version: "3.7"
+services:
+  postgres:
+    image: "postgres:12"
+    container_name: "${COMPOSE_PROJECT_NAME:?}_postgres"
+    ports:
+      - "${DEVKER_POSTGRES_PORT:?}:5432"
+    networks:
+      - postgres
+    volumes:
+      - type: "volume"
+        source: "postgres_data"
+        target: "/var/lib/postgresql/data"
+      - type: "bind"
+        source: "${DEVKER_POSTGRES_DUMP_FOLDER:?}"
+        target: "/root/db-dumps"
+    environment:
+      POSTGRES_PASSWORD: "${DEVKER_POSTGRES_SUPER_PASSWORD:?}"
+
+networks:
+  postgres:
+    driver: bridge
+
+volumes:
+  postgres_data:

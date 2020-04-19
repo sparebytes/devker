@@ -3,9 +3,11 @@ const { Cli, Command } = require("clipanion");
 const fs = require("fs");
 const { promises: fsp } = fs;
 const _path = require("path");
+const { posix } = _path;
 const { Transform } = require("stream");
+const { capitalCase, constantCase, paramCase, snakeCase } = require("change-case");
 const uuidv4 = require("uuid/v4");
-require("dotenv").config();
+require("dotenv-flow").config();
 
 // help
 class HelpCommand extends Command {
@@ -27,24 +29,48 @@ class DockerComposeServiceCommand extends BaseCommand {
   cwd = process.cwd();
   service;
 }
-DockerComposeServiceCommand.addOption("service", Command.String("--service,-s"));
+DockerComposeServiceCommand.addOption("service", Command.String("-s,--service"));
 
 // env init
-class EnvInitCommand extends BaseCommand {
+class InitCommand extends BaseCommand {
+  dir = undefined;
+  name = "My App";
   overwrite = false;
   async execute() {
-    const envFilepath = _path.resolve(this.cwd, ".env");
-    if (!this.overwrite) {
-      if (fs.existsSync(envFilepath)) {
-        throw new Error(`.env file already exists at "${envFilepath}". Use "--overwite" flag to force.`);
+    if (!this.dir) {
+      throw new Error("dir argument is required");
+    }
+    const rootDir = _path.resolve(this.cwd, this.dir);
+    await fsp.mkdir(rootDir, { recursive: true });
+    const files = await makeInitFileContent({ name: this.name });
+    let errored = false;
+    for (const relPath in files) {
+      const contents = files[relPath];
+      try {
+        const filepath = _path.resolve(rootDir, relPath);
+        await fsp.mkdir(_path.dirname(filepath), { recursive: true });
+        if (!this.overwrite) {
+          if (fs.existsSync(filepath)) {
+            errored = true;
+            console.error(`Skipping: ${filepath}\n  "${relPath}" already exists. Use "--overwite" flag to force.`);
+            continue;
+          }
+        }
+        await fsp.writeFile(filepath, contents);
+        console.log("Wrote:", filepath);
+      } catch (error) {
+        errored = true;
+        console.error("Error while writing file:", filePath);
+        console.error(error);
       }
     }
-    const envContent = makeEnvFileContent();
-    await fsp.writeFile(envFilepath, envContent);
+    return errored ? 1 : 0;
   }
 }
-EnvInitCommand.addPath(`env`, `init`);
-EnvInitCommand.addOption("overwrite", Command.Boolean("--overwrite"));
+InitCommand.addPath(`init`);
+InitCommand.addOption("dir", Command.String({ required: true }));
+InitCommand.addOption("name", Command.Boolean("-n,--name"));
+InitCommand.addOption("overwrite", Command.Boolean("--overwrite"));
 
 // bash
 class BashCommand extends BaseCommand {
@@ -101,11 +127,32 @@ DestroyCommand.addOption("rest", Command.Rest());
 // PostgressCommand
 class PostgresCommand extends DockerComposeServiceCommand {
   service = "postgres";
+  _envVarPrefix = "";
+  get envVarPrefix() {
+    return this._envVarPrefix || constantCase(`DEVKER_${this.service}`) + "_";
+  }
+  get postgresEnv() {
+    return getPostgresEnv(this.envVarPrefix);
+  }
+  findMatchingConnections(options) {
+    const psqlEnv = options.postgresEnv || this.postgresEnv;
+    const dbnames = new Set(options.filters.length > 0 ? options.filters : psqlEnv.connections.map((c) => c.dbname));
+    const matchingConnections = Array.from(dbnames.values()).map((dbname) => {
+      const connection = psqlEnv.connections.find((c) => c.dbname === dbname);
+      if (connection == null) {
+        throw new Error(`Unable to find connection with db "${dbname}"`);
+      }
+      return connection;
+    });
+    return matchingConnections;
+  }
 }
+PostgresCommand.addOption("service", Command.String("-s,--service"));
+PostgresCommand.addOption("envPrefix", Command.String("--env-prefix"));
 
 // postgres ssh
 class PostgresSshCommand extends PostgresCommand {
-  rest
+  rest;
   async execute() {
     return spawnPromise("docker-compose", ["exec", this.service, "bash", "-l", ...this.rest], [], { cwd: this.cwd });
   }
@@ -115,58 +162,118 @@ PostgresSshCommand.addPath(`postgres`, `ssh`);
 
 // postgres psql
 class PostgresPsqlCommand extends PostgresCommand {
-  rest
+  username;
+  rest;
   async execute() {
-    return spawnPromise("docker-compose", ["exec", this.service, "bash", "-c", `psql`, ...this.rest], [], { cwd: this.cwd });
+    const psqlEnv = this.postgresEnv;
+    const username = this.username || psqlEnv.super.username || "postgres";
+    return spawnPromise(
+      "docker-compose",
+      ["exec", this.service, "bash", "-c", commandArrayToString("psql", ["-U", username, ...this.rest])],
+      [],
+      { cwd: this.cwd },
+    );
   }
 }
+PostgresPsqlCommand.addOption("username", Command.String("-U,--username"));
 PostgresPsqlCommand.addOption("rest", Command.Rest());
 PostgresPsqlCommand.addPath(`postgres`, `psql`);
 
 // postgres restore
-class RestoreCommand extends PostgresCommand {
+class PostgresRestoreCommand extends PostgresCommand {
+  dbnames = [];
   filename;
   verbose = false;
   quiet = false;
   async execute() {
     const quiet = this.quiet;
     const verbose = this.verbose && !this.quiet;
-    const psqlEnv = getPostgresEnv("APP_PSQL_");
-    const filename = `${this.filename || "latest"}.sql.gz`;
-    const execOptions = {
-      cwd: this.cwd,
-      stdout: verbose ? this.context.stdout : getStreamSink(),
-      stderr: quiet ? getStreamSink() : this.context.stderr,
-    };
-    console["log"](`Restoring database from ${filename}`);
-    const initdbSql = makeInitializeDbScript(psqlEnv);
-    if (this.verbose) {
-      console["log"]("Executing SQL:");
-      for (const line of initdbSql.split(/[\r\n]+/)) {
-        console["log"](" ", line);
+    const postgresEnv = this.postgresEnv;
+    const superuser = postgresEnv.super.username;
+    const matchingConnections = this.findMatchingConnections({ filters: this.dbnames, postgresEnv });
+    let errored = false;
+    for (const connection of matchingConnections) {
+      try {
+        const filename = `${connection.dbname}/${this.filename || "latest"}.sql.gz`;
+        const execOptions = {
+          cwd: this.cwd,
+          stdout: verbose ? this.context.stdout : getStreamSink(),
+          stderr: quiet ? getStreamSink() : this.context.stderr,
+        };
+        console["log"]("Dropping Database:", connection.dbname);
+        await bashRun(this.service, `dropdb -U ${superuser} --if-exists ${connection.dbname}`, execOptions);
+        console["log"]("Creating Database:", connection.dbname);
+        await bashRun(this.service, `createdb -U ${superuser} ${connection.dbname}`, execOptions);
+        console["log"]("Creating Role:", connection.username);
+        const initdbSql = makeInitializeUserScript(connection);
+        if (this.verbose) {
+          console["log"]("Executing SQL:");
+          for (const line of initdbSql.split(/[\r\n]+/)) {
+            console["log"](" ", line);
+          }
+        }
+        await bashRun(this.service, `printf "${escapeBashString(initdbSql)}" | psql -U ${superuser}`, execOptions);
+        console["log"](`Restoring database from ${filename}`);
+        await bashRun(this.service, `gunzip -c /root/db-dumps/${filename} | psql -U ${superuser}`, execOptions);
+        console["log"](`  ... ${filename} executed`);
+      } catch (error) {
+        errored = true;
+        console.error(error);
+        console.error("Error while restoring database:", connection.dbname);
       }
     }
-    await bashRun(this.service, `printf "${escapeBashString(initdbSql)}" | PGDATABASE=postgres psql`, execOptions);
-    console["log"](`  ... db ${psqlEnv.dbname} dropped and re-created`);
-    await bashRun(this.service, `gunzip -c /root/db-dumps/${filename} | psql`, execOptions);
-    console["log"](`  ... ${filename} executed`);
+    return errored ? 1 : 0;
   }
 }
-RestoreCommand.addPath(`postgres`, `restore`);
-RestoreCommand.addOption("filename", Command.String("-f,--filename"));
-RestoreCommand.addOption("verbose", Command.Boolean("--verbose"));
-RestoreCommand.addOption("quiet", Command.Boolean("-q,--quiet"));
+PostgresRestoreCommand.addPath(`postgres`, `restore`);
+PostgresRestoreCommand.addOption("dbnames", Command.Array("-d,--db"));
+PostgresRestoreCommand.addOption("username", Command.String("-u,--username"));
+PostgresRestoreCommand.addOption("filename", Command.String("-f,--filename"));
+PostgresRestoreCommand.addOption("verbose", Command.Boolean("--verbose"));
+PostgresRestoreCommand.addOption("quiet", Command.Boolean("-q,--quiet"));
 
 // postgres dump
-class DumpCommand extends PostgresCommand {
+class PostgresDumpCommand extends PostgresCommand {
+  dbnames = [];
   filename;
   async execute() {
-    const dumpFile = `${this.filename || `dump-${new Date().toISOString().replace(/:/g, "-")}`}.sql.gz`;
-    await bashRun(this.service, `pg_dump | gzip > /root/db-dumps/${dumpFile}`, { cwd: this.cwd });
+    const postgresEnv = this.postgresEnv;
+    const superuser = postgresEnv.super.username;
+    const matchingConnections = this.findMatchingConnections({ filters: this.dbnames, postgresEnv });
+    let errored = false;
+    for (const connection of matchingConnections) {
+      try {
+        console["log"]("Dumping Database:", connection.dbname);
+        const name = this.filename || `dump-${new Date().toISOString().replace(/:/g, "-")}`;
+        const dumpPath = posix.normalize(`/root/db-dumps/${connection.dbname}/${name}.sql.gz`);
+        const dumpDir = posix.dirname(dumpPath);
+        await bashRun(this.service, `mkdir -p ${dumpDir}`, { cwd: this.cwd });
+        await bashRun(this.service, `pg_dump -U ${superuser} | gzip > ${dumpPath}`, { cwd: this.cwd });
+        console["log"]("  ", dumpPath);
+      } catch (error) {
+        errored = true;
+        console.error(error);
+        console.error("Error while dumping database:", connection.dbname);
+      }
+    }
+    return errored ? 1 : 0;
   }
 }
-DumpCommand.addPath(`postgres`, `dump`);
-DumpCommand.addOption("filename", Command.String("-f,--filename"));
+PostgresDumpCommand.addOption("dbnames", Command.Array("-d,--db"));
+PostgresDumpCommand.addPath(`postgres`, `dump`);
+PostgresDumpCommand.addOption("filename", Command.String("-f,--filename"));
+
+// postgres list connections
+class PostgresListConnectionCommand extends PostgresCommand {
+  async execute() {
+    for (const connection of this.postgresEnv.connections) {
+      console.log(
+        `postgresql://${connection.username}:${connection.password}@${connection.host}:${connection.port}/${connection.dbname}`,
+      );
+    }
+  }
+}
+PostgresListConnectionCommand.addPath(`postgres`, `list`, `connections`);
 
 // ...
 const cli = new Cli({
@@ -175,16 +282,17 @@ const cli = new Cli({
   binaryVersion: `1.0.0`,
 });
 cli.register(HelpCommand);
-cli.register(EnvInitCommand);
+cli.register(InitCommand);
 cli.register(BashCommand);
 cli.register(DockerComposeCommand);
 cli.register(UpCommand);
 cli.register(DownCommand);
 cli.register(DestroyCommand);
-cli.register(RestoreCommand);
-cli.register(DumpCommand);
+cli.register(PostgresRestoreCommand);
+cli.register(PostgresDumpCommand);
 cli.register(PostgresSshCommand);
 cli.register(PostgresPsqlCommand);
+cli.register(PostgresListConnectionCommand);
 module.exports = { cli };
 
 // utilities
@@ -216,55 +324,93 @@ function commandArrayToString(command, args) {
   return commandString;
 }
 
-function makeEnvFileContent() {
+async function makeInitFileContent(options) {
+  const description = capitalCase(options.name);
+  const name = paramCase(options.name);
+  const superPassword = uuidv4().slice(0, 8);
+  const examplePassword = uuidv4().slice(0, 8);
+  const exampleUser = snakeCase(options.name);
   const key = uuidv4().slice(0, 6);
-  return `COMPOSE_FILE=docker-compose.yml
-COMPOSE_PROJECT_NAME=my-app-${key}
-COMPOSE_PROJECT_DESCRIPTION=My App ${key}
-APP_PSQL_PORT=
-APP_PSQL_DB=
-APP_PSQL_USER=
-APP_PSQL_PASSWORD=
-APP_REDIS_PORT=
-`;
+  const dockerComposeContent = await fsp
+    .readFile(_path.resolve(__dirname, "docker-compose.template.yml"))
+    .then((b) => b.toString())
+    .catch((e) => `Error reading docker-compose.template.yml. ` + (e || {}).message || "");
+  return {
+    ".gitignore": `/db-dumps
+!/db-dumps/.gitkeep
+.env.local
+.env.*.local
+`,
+    ".env": `COMPOSE_FILE=docker-compose.yml
+COMPOSE_PROJECT_NAME=${name}-${key}
+COMPOSE_PROJECT_DESCRIPTION=${description} ${key}
+DEVKER_POSTGRES_DUMP_FOLDER=./db-dumps
+DEVKER_POSTGRES_PORT=5432
+DEVKER_POSTGRES_SUPER_PASSWORD=${superPassword}
+# DEVKER_POSTGRES_CONNECTIONS=["${exampleUser}:${examplePassword}@localhost/${exampleUser}"]
+`,
+    ".env.local": `# Anything you would like to override on your personal machine goes here.
+`,
+    "docker-compose.yml": dockerComposeContent,
+    "db-dumps/.gitkeep": "",
+  };
 }
 
-function makeInitializeDbScript({ dbname, username, password }) {
+function makeInitializeUserScript({ dbname, username, password }) {
+  const passwordSql = password
+    ? `
+ALTER ROLE "${username}" WITH PASSWORD '${password}';
+ALTER ROLE "${username}" WITH LOGIN;`
+    : "";
   const sql = `
---
--- Kill all connections except this one
---
-SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid();
-
---
--- Create "${dbname}" database
---
-DROP DATABASE IF EXISTS "${dbname}";
-CREATE DATABASE "${dbname}";
-
 --
 -- Create "${username}" user/role
 --
-CREATE ROLE "${username}" WITH PASSWORD '${password}';
-ALTER ROLE "${username}" WITH LOGIN;
-ALTER ROLE "${username}" WITH SUPERUSER;
+CREATE ROLE "${username}";${passwordSql}
 ALTER ROLE "${username}" WITH CREATEDB;
 ALTER ROLE "${username}" WITH CREATEROLE;
-GRANT ALL PRIVILEGES ON SCHEMA public TO "${username}";
-GRANT ALL PRIVILEGES ON DATABASE "postgres" TO "${username}";
 GRANT ALL PRIVILEGES ON DATABASE "${dbname}" TO "${username}";
 `;
+  // ALTER ROLE "${username}" WITH SUPERUSER;
+  // GRANT ALL PRIVILEGES ON SCHEMA public TO "${username}";
+  // GRANT ALL PRIVILEGES ON DATABASE "postgres" TO "${username}";
   return sql;
 }
 
 function getPostgresEnv(prefix) {
   const env = process.env;
-  return {
-    dbname: env[prefix + "DB"],
-    port: env[prefix + "PORT"],
-    username: env[prefix + "USER"],
-    password: env[prefix + "PASSWORD"],
+  const superPrefix = prefix + "SUPER_";
+  const port = env[prefix + "PORT"];
+  const _super = {
+    dbname: env[superPrefix + "DB"] || "postgres",
+    username: env[superPrefix + "USER"] || "postgres",
+    password: env[superPrefix + "PASSWORD"],
+    host: "localhost",
+    port: port,
   };
+  const connections = [
+    _super,
+    ...JSON.parse(env[prefix + "connections"] || "[]").map((connection) => {
+      const parsed = parseConnectionString(connection);
+      return {
+        dbname: parsed.dbname,
+        username: parsed.username,
+        password: parsed.password,
+        host: parsed.host || "localhost",
+        port: parsed.port || port,
+      };
+    }),
+  ];
+  return { port, super: _super, connections };
+}
+
+const parseConnectionStringRegex = /^(?:.*?\/\/)?(?:(?<username>[^:@]*)?(?:\:(?<password>[^@]*))?@)?(?<host>[^\:/]+)(?:\:(?<port>\d+))?\/(?<dbname>[^\?]+)/;
+function parseConnectionString(cs) {
+  const parts = parseConnectionStringRegex.exec(cs);
+  if (parts == null) {
+    throw new Error("Unable to parse connection string:" + cs);
+  }
+  return parts.groups;
 }
 
 function escapeBashString(input) {
@@ -283,3 +429,19 @@ function getStreamSink() {
   ws._flush = () => {};
   return ws;
 }
+
+// OLD PSQL Initialization:
+/*
+
+--
+-- Kill all connections except this one
+--
+SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid();
+
+--
+-- Create "${dbname}" database
+--
+DROP DATABASE IF EXISTS "${dbname}";
+CREATE DATABASE "${dbname}";
+
+*/
