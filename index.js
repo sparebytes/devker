@@ -8,6 +8,7 @@ const { posix } = _path;
 const { Transform } = require("stream");
 const { capitalCase, constantCase, paramCase, snakeCase } = require("change-case");
 const { v4: uuidv4 } = require("uuid");
+const passwordGenerator = require("generate-password");
 
 const devkerVersion = require("./package.json").version;
 
@@ -43,6 +44,43 @@ class PrintEnvCommand extends Command {
   }
 }
 PrintEnvCommand.addPath("print", "env");
+
+// generate password
+class GeneratePasswordCommand extends Command {
+  count = 1;
+  length = 10;
+  exclude = "";
+  async execute() {
+    const { stdout } = this.context;
+    const flags = new Set(["numbers", "uppercase"]);
+    for (const flag of this.flags) {
+      if (flag.startsWith("!")) {
+        flags.delete(flag.slice(1));
+      } else {
+        flags.add(flag);
+      }
+    }
+    const passwords = passwordGenerator.generateMultiple(parseInt(this.count), {
+      length: parseInt(this.length),
+      numbers: flags.has("numbers"),
+      symbols: flags.has("symbols"),
+      lowercase: flags.has("lowercase"),
+      uppercase: flags.has("uppercase"),
+      excludeSimilarCharacters: !flags.has("similarCharacters"),
+      exclude: flags.has("exclude"),
+      strict: flags.has("strict"),
+    });
+    for (const password of passwords) {
+      stdout.write(password);
+      stdout.write("\n");
+    }
+  }
+}
+GeneratePasswordCommand.addPath("generate", "password");
+GeneratePasswordCommand.addOption("count", Command.String("-c,--count"));
+GeneratePasswordCommand.addOption("length", Command.String("-l,--length"));
+GeneratePasswordCommand.addOption("exclude", Command.String("-e,--exclude"));
+GeneratePasswordCommand.addOption("flags", Command.Rest());
 
 // BaseCommand
 class BaseCommand extends Command {
@@ -337,6 +375,7 @@ const cli = new Cli({
 cli.register(HelpCommand);
 cli.register(VersionCommand);
 cli.register(PrintEnvCommand);
+cli.register(GeneratePasswordCommand);
 cli.register(InitCommand);
 cli.register(BashCommand);
 cli.register(DockerComposeCommand);
@@ -383,10 +422,21 @@ function commandArrayToString(command, args) {
 async function makeInitFileContent(options) {
   const description = capitalCase(options.name);
   const name = paramCase(options.name);
-  const superPassword = uuidv4().slice(0, 8);
-  const examplePassword = uuidv4().slice(0, 8);
   const exampleUser = snakeCase(options.name);
-  const key = uuidv4().slice(0, 6);
+  const key = passwordGenerator.generate({
+    length: 6,
+    numbers: true,
+    lowercase: true,
+    excludeSimilarCharacters: true,
+  });
+  const [superPassword, examplePassword] = passwordGenerator.generateMultiple(2, {
+    length: 10,
+    numbers: true,
+    symbols: false,
+    lowercase: false,
+    uppercase: true,
+    excludeSimilarCharacters: true,
+  });
   const dockerComposeContent = await fsp
     .readFile(_path.resolve(__dirname, "docker-compose.template.yml"))
     .then((b) => b.toString())
