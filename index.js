@@ -211,6 +211,7 @@ class PostgresRestoreCommand extends PostgresCommand {
           stderr: quiet ? getStreamSink() : this.context.stderr,
         };
         console["log"]("Dropping Database:", connection.dbname);
+        await postgresExecuteSql(this.service, killConnectionsSql, superuser, execOptions);
         await bashRun(this.service, `dropdb -U ${superuser} --if-exists ${connection.dbname}`, execOptions);
         console["log"]("Creating Database:", connection.dbname);
         await bashRun(this.service, `createdb -U ${superuser} ${connection.dbname}`, execOptions);
@@ -222,7 +223,7 @@ class PostgresRestoreCommand extends PostgresCommand {
             console["log"](" ", line);
           }
         }
-        await bashRun(this.service, `printf "${escapeBashString(initdbSql)}" | psql -U ${superuser}`, execOptions);
+        await postgresExecuteSql(this.service, initdbSql, superuser, execOptions);
         console["log"](`Restoring database from ${filename}`);
         await bashRun(this.service, `gunzip -c /root/db-dumps/${filename} | psql -U ${superuser}`, execOptions);
         console["log"](`  ... ${filename} executed`);
@@ -441,18 +442,11 @@ function getStreamSink() {
   return ws;
 }
 
-// OLD PSQL Initialization:
-/*
+async function postgresExecuteSql(service, sql, superuser, execOptions) {
+  await bashRun(service, `printf "${escapeBashString(sql)}" | psql -U ${superuser || "postgres"}`, execOptions);
+}
 
---
+const killConnectionsSql = `
 -- Kill all connections except this one
---
 SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid();
-
---
--- Create "${dbname}" database
---
-DROP DATABASE IF EXISTS "${dbname}";
-CREATE DATABASE "${dbname}";
-
-*/
+`;
