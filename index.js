@@ -286,6 +286,14 @@ class PostgresListConnectionCommand extends PostgresCommand {
 }
 PostgresListConnectionCommand.addPath(`postgres`, `list`, `connections`);
 
+// postgres kill connections
+class PostgresKillConnectionCommand extends PostgresCommand {
+  async execute() {
+    await postgresExecuteSql(this.service, killConnectionsSql, this.postgresEnv.super.username, { cwd: this.cwd });
+  }
+}
+PostgresKillConnectionCommand.addPath(`postgres`, `kill`, `connections`);
+
 // ...
 const cli = new Cli({
   binaryLabel: `Devker`,
@@ -305,6 +313,7 @@ cli.register(PostgresDumpCommand);
 cli.register(PostgresSshCommand);
 cli.register(PostgresPsqlCommand);
 cli.register(PostgresListConnectionCommand);
+cli.register(PostgresKillConnectionCommand);
 module.exports = { cli };
 
 // utilities
