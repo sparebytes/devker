@@ -7,7 +7,7 @@ const _path = require("path");
 const { posix } = _path;
 const { Transform } = require("stream");
 const { capitalCase, constantCase, paramCase, snakeCase } = require("change-case");
-const { v4: uuidv4 } = require("uuid");
+const uuidGenerator = require("uuid");
 const passwordGenerator = require("generate-password");
 
 const devkerVersion = require("./package.json").version;
@@ -32,14 +32,9 @@ VersionCommand.addPath("version");
 // print env
 class PrintEnvCommand extends Command {
   async execute() {
-    const { stdout } = this.context;
     const parsed = envFromFile.parsed;
     for (const k in parsed) {
-      const value = parsed[k];
-      stdout.write(k);
-      stdout.write("=");
-      stdout.write(value);
-      stdout.write("\n");
+      this.context.stdout.write(`${k}=${parsed[k]}\n`);
     }
   }
 }
@@ -51,7 +46,6 @@ class GeneratePasswordCommand extends Command {
   length = 10;
   exclude = "";
   async execute() {
-    const { stdout } = this.context;
     const flags = new Set(["numbers", "uppercase"]);
     for (const flag of this.flags) {
       if (flag.startsWith("!")) {
@@ -71,8 +65,7 @@ class GeneratePasswordCommand extends Command {
       strict: flags.has("strict"),
     });
     for (const password of passwords) {
-      stdout.write(password);
-      stdout.write("\n");
+      this.context.stdout.write(password + "\n");
     }
   }
 }
@@ -81,6 +74,26 @@ GeneratePasswordCommand.addOption("count", Command.String("-c,--count"));
 GeneratePasswordCommand.addOption("length", Command.String("-l,--length"));
 GeneratePasswordCommand.addOption("exclude", Command.String("-e,--exclude"));
 GeneratePasswordCommand.addOption("flags", Command.Rest());
+
+// generate password
+class GenerateUuidCommand extends Command {
+  count = 1;
+  rest = [];
+  async execute() {
+    const version = this.rest[0] || "v4";
+    const uuidGen = uuidGenerator[version];
+    if (uuidGen == null) {
+      console.error(`"${version}" is not a valid uuid version`);
+      return 1;
+    }
+    for (let i = 0; i < this.count; i++) {
+      this.context.stdout.write(uuidGen() + "\n");
+    }
+  }
+}
+GenerateUuidCommand.addPath("generate", "uuid");
+GenerateUuidCommand.addOption("count", Command.String("-c,--count"));
+GenerateUuidCommand.addOption("rest", Command.Rest());
 
 // BaseCommand
 class BaseCommand extends Command {
@@ -376,6 +389,7 @@ cli.register(HelpCommand);
 cli.register(VersionCommand);
 cli.register(PrintEnvCommand);
 cli.register(GeneratePasswordCommand);
+cli.register(GenerateUuidCommand);
 cli.register(InitCommand);
 cli.register(BashCommand);
 cli.register(DockerComposeCommand);
@@ -551,7 +565,7 @@ async function useTemporaryDb(service, superuser, execOptions, callback) {
     stdout: getStreamSink(),
     stderr: getStreamSink(),
   };
-  const tmpDbname = `tmpdb_${uuidv4().slice(0, 8)}`;
+  const tmpDbname = `tmpdb_${uuidGenerator.v4().slice(0, 8)}`;
   const execSql = async (sql, _execOptions) => {
     _execOptions = { execOptions, ..._execOptions };
     await postgresExecuteSql(service, superuser, tmpDbname, sql, execOptions);
