@@ -9,6 +9,8 @@ const { capitalCase, constantCase, paramCase, snakeCase } = require("change-case
 const uuidv4 = require("uuid/v4");
 require("dotenv-flow").config();
 
+const devkerVersion = require("./package.json").version;
+
 // help
 class HelpCommand extends Command {
   async execute() {
@@ -17,6 +19,14 @@ class HelpCommand extends Command {
 }
 HelpCommand.addPath("--help");
 HelpCommand.addPath("-h");
+
+// version
+class VersionCommand extends Command {
+  async execute() {
+    this.context.stdout.write(devkerVersion + "\n");
+  }
+}
+VersionCommand.addPath("version");
 
 // BaseCommand
 class BaseCommand extends Command {
@@ -277,11 +287,12 @@ PostgresListConnectionCommand.addPath(`postgres`, `list`, `connections`);
 
 // ...
 const cli = new Cli({
-  binaryLabel: `DbCli`,
-  binaryName: `db cli`,
-  binaryVersion: `1.0.0`,
+  binaryLabel: `Devker`,
+  binaryName: `devker`,
+  binaryVersion: devkerVersion,
 });
 cli.register(HelpCommand);
+cli.register(VersionCommand);
 cli.register(InitCommand);
 cli.register(BashCommand);
 cli.register(DockerComposeCommand);
