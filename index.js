@@ -137,8 +137,8 @@ class InitCommand extends BaseCommand {
     let errored = false;
     for (const relPath in files) {
       const contents = files[relPath];
+      const filepath = _path.resolve(rootDir, relPath);
       try {
-        const filepath = _path.resolve(rootDir, relPath);
         await fsp.mkdir(_path.dirname(filepath), { recursive: true });
         if (!this.overwrite) {
           if (fs.existsSync(filepath)) {
@@ -151,7 +151,7 @@ class InitCommand extends BaseCommand {
         console["log"]("Wrote:", filepath);
       } catch (error) {
         errored = true;
-        console.error("Error while writing file:", filePath);
+        console.error("Error while writing file:", filepath);
         console.error(error);
       }
     }
@@ -531,7 +531,7 @@ function getPostgresEnv(prefix) {
   return { port, super: _super, connections };
 }
 
-const parseConnectionStringRegex = /^(?:.*?\/\/)?(?:(?<username>[^:@]*)?(?:\:(?<password>[^@]*))?@)?(?<host>[^\:/]+)(?:\:(?<port>\d+))?\/(?<dbname>[^\?]+)/;
+const parseConnectionStringRegex = /^(?:.*?\/\/)?(?:(?<username>[^:@]*)?(?::(?<password>[^@]*))?@)?(?<host>[^:/]+)(?::(?<port>\d+))?\/(?<dbname>[^?]+)/;
 function parseConnectionString(cs) {
   const parts = parseConnectionStringRegex.exec(cs);
   if (parts == null) {
@@ -572,7 +572,7 @@ async function useTemporaryDb(service, superuser, execOptions, callback) {
   const tmpDbname = `tmpdb_${uuidGenerator.v4().slice(0, 8)}`;
   const execSql = async (sql, _execOptions) => {
     _execOptions = { execOptions, ..._execOptions };
-    await postgresExecuteSql(service, superuser, tmpDbname, sql, execOptions);
+    await postgresExecuteSql(service, superuser, tmpDbname, sql, _execOptions);
   };
   try {
     await bashRun(service, `createdb -U ${superuser} ${tmpDbname}`, quietExecOptions);
