@@ -67,7 +67,7 @@ class InitCommand extends BaseCommand {
           }
         }
         await fsp.writeFile(filepath, contents);
-        console.log("Wrote:", filepath);
+        console["log"]("Wrote:", filepath);
       } catch (error) {
         errored = true;
         console.error("Error while writing file:", filePath);
@@ -212,22 +212,30 @@ class PostgresRestoreCommand extends PostgresCommand {
           stderr: quiet ? getStreamSink() : this.context.stderr,
         };
         console["log"]("Dropping Database:", connection.dbname);
-        await postgresExecuteSql(this.service, killConnectionsSql, superuser, execOptions);
+        await postgresExecuteSql(this.service, killConnectionsSql, superuser, {
+          ...execOptions,
+          stdout: getStreamSink(),
+          stderr: getStreamSink(),
+        });
         await bashRun(this.service, `dropdb -U ${superuser} --if-exists ${connection.dbname}`, execOptions);
         console["log"]("Creating Database:", connection.dbname);
         await bashRun(this.service, `createdb -U ${superuser} ${connection.dbname}`, execOptions);
-        console["log"]("Creating Role:", connection.username);
-        const initdbSql = makeInitializeUserScript(connection);
-        if (this.verbose) {
-          console["log"]("Executing SQL:");
-          for (const line of initdbSql.split(/[\r\n]+/)) {
-            console["log"](" ", line);
+        if (connection.username) {
+          console["log"]("Creating Role:", connection.username);
+          const initdbSql = initializeRoleSql(connection);
+          if (this.verbose) {
+            console["log"]("Executing SQL:");
+            for (const line of initdbSql.split(/[\r\n]+/)) {
+              console["log"](" ", line);
+            }
           }
+          await postgresExecuteSql(this.service, initdbSql, superuser, execOptions);
+        } else {
+          console.warn("Creating Role: Skipped becuase username is empty!");
         }
-        await postgresExecuteSql(this.service, initdbSql, superuser, execOptions);
         console["log"](`Restoring database from ${filename}`);
         const readCommand = this.noGzip ? `cat /root/db-dumps/${filename}` : `gunzip -c /root/db-dumps/${filename}`;
-        await bashRun(this.service, `${readCommand} | psql -U ${superuser}`, execOptions);
+        await bashRun(this.service, `${readCommand} | psql -U ${superuser} --dbname ${connection.dbname}`, execOptions);
         console["log"](`  ... ${filename} executed`);
       } catch (error) {
         errored = true;
@@ -263,7 +271,10 @@ class PostgresDumpCommand extends PostgresCommand {
         const dumpPath = posix.normalize(`/root/db-dumps/${connection.dbname}/${name}.sql${this.noGzip ? "" : ".gz"}`);
         const dumpDir = posix.dirname(dumpPath);
         await bashRun(this.service, `mkdir -p ${dumpDir}`, { cwd: this.cwd });
-        await bashRun(this.service, `pg_dump -U ${superuser} ${this.noGzip ? "" : "| gzip"} > ${dumpPath}`, { cwd: this.cwd });
+        const sqlPipe = this.noGzip ? "" : "| gzip";
+        await bashRun(this.service, `pg_dump -U ${superuser} --dbname ${connection.dbname} ${sqlPipe} > ${dumpPath}`, {
+          cwd: this.cwd,
+        });
         console["log"]("  ", dumpPath);
       } catch (error) {
         errored = true;
@@ -283,7 +294,7 @@ PostgresDumpCommand.addOption("noGzip", Command.Boolean("--no-gz"));
 class PostgresListConnectionCommand extends PostgresCommand {
   async execute() {
     for (const connection of this.postgresEnv.connections) {
-      console.log(
+      console["log"](
         `postgresql://${connection.username}:${connection.password}@${connection.host}:${connection.port}/${connection.dbname}`,
       );
     }
@@ -382,7 +393,7 @@ DEVKER_POSTGRES_SUPER_PASSWORD=${superPassword}
   };
 }
 
-function makeInitializeUserScript({ dbname, username, password }) {
+function initializeRoleSql({ dbname, username, password }) {
   const passwordSql = password
     ? `
 ALTER ROLE "${username}" WITH PASSWORD '${password}';
@@ -392,7 +403,10 @@ ALTER ROLE "${username}" WITH LOGIN;`
 --
 -- Create "${username}" user/role
 --
-CREATE ROLE "${username}";${passwordSql}
+DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${username}') THEN
+  CREATE ROLE "${username}";
+END IF; END $$;
+${passwordSql}
 ALTER ROLE "${username}" WITH CREATEDB;
 ALTER ROLE "${username}" WITH CREATEROLE;
 GRANT ALL PRIVILEGES ON DATABASE "${dbname}" TO "${username}";
@@ -443,6 +457,7 @@ function escapeBashString(input) {
   return input
     .replace(/\\/g, `\\\\`)
     .replace(/"/g, `\\"`)
+    .replace(/\$/g, `\\$`)
     .replace(/\r\n/g, `\\n`)
     .replace(/[\r\n]/g, `\\n`);
 }
@@ -457,7 +472,8 @@ function getStreamSink() {
 }
 
 async function postgresExecuteSql(service, sql, superuser, execOptions) {
-  await bashRun(service, `printf "${escapeBashString(sql)}" | psql -U ${superuser || "postgres"}`, execOptions);
+  const escapedSql = escapeBashString(sql);
+  await bashRun(service, `printf "${escapedSql}" | psql -U ${superuser || "postgres"}`, execOptions);
 }
 
 const killConnectionsSql = `
