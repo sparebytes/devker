@@ -16,12 +16,12 @@
     "url": "https://github.com/sparebytes/devker.git"
   },
   "dependencies": {
-    "@yarnpkg/shell": "^2.0.0-rc.8",
+    "@yarnpkg/shell": "^2.0.0-rc.11",
     "change-case": "^4.1.1",
-    "clipanion": "~2.1.6",
+    "clipanion": "~2.3.1",
     "dotenv": "^8.2.0",
     "dotenv-flow": "^3.1.0",
-    "uuid": "^3.4.0"
+    "uuid": "^7.0.3"
   },
   "scripts": {
     "try": "cd try && node ../cli.js",
