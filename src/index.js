@@ -23,11 +23,17 @@ class HelpCommand extends Command {
   @Command.Path("--help")
   async execute() {
     this.context.stdout.write(this.cli.usage(null));
+    this.context.stdout.write("\n");
   }
 }
 
 // version
 class VersionCommand extends Command {
+  static usage = Command.Usage({
+    category: "Environment",
+    description: `print the version of Devker`,
+  });
+
   @Command.Path("version")
   async execute() {
     this.context.stdout.write(devkerVersion + "\n");
@@ -36,6 +42,11 @@ class VersionCommand extends Command {
 
 // print env
 class PrintEnvCommand extends Command {
+  static usage = Command.Usage({
+    category: "Environment",
+    description: `print the computed envirnment from .env.* files`,
+  });
+
   @Command.Path("print", "env")
   async execute() {
     const parsed = envFromFile.parsed;
@@ -47,6 +58,21 @@ class PrintEnvCommand extends Command {
 
 // generate password
 class GeneratePasswordCommand extends Command {
+  static usage = Command.Usage({
+    category: "Utilities",
+    description: `generate random password(s)`,
+    details: `
+        Flags: numbers | symbols | lowercase | uppercase | similarCharacters | strict
+    `,
+    examples: [
+      [`Generate a 10 character password (default)`, `devker generate password`],
+      [
+        `Generate a five passwords of 32 characters with numbers, symbols, lowercase letters, no uppercase letters, no similar characters, and exclude the numbers 4 and 2`,
+        `devker generate password --count 5 -length 32 -exclude 42 numbers symbols lowercase !uppercase !similarCharacters`,
+      ],
+    ],
+  });
+
   @Command.String("-c,--count")
   count = 1;
 
@@ -87,6 +113,15 @@ class GeneratePasswordCommand extends Command {
 
 // generate password
 class GenerateUuidCommand extends Command {
+  static usage = Command.Usage({
+    category: "Utilities",
+    description: `generate random UUID(s)`,
+    examples: [
+      [`Generate a v4 UUID (default)`, `devker generate uuid`],
+      [`Generate several v1 UUIDs`, `devker generate uuid v1 -c 5`],
+    ],
+  });
+
   @Command.String("-c,--count")
   count = 1;
 
@@ -115,6 +150,15 @@ class BaseCommand extends Command {
 
 // ssh
 class SshCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Container",
+    description: `open a shell into a running container`,
+    examples: [
+      [`Open SH into continer of postgres service`, `devker ssh postgres`],
+      [`Open BASH into continer of postgres service`, `devker ssh --bash postgres`],
+    ],
+  });
+
   @Command.String({ required: true })
   service;
 
@@ -131,6 +175,46 @@ class SshCommand extends BaseCommand {
   }
 }
 
+// exec sh
+class ExecShCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Container",
+    description: `execute a command using sh inside a running container`,
+    examples: [[`echo hello in postgres container`, `devker exec sh postgres echo hello`]],
+  });
+
+  @Command.String({ required: true })
+  service;
+
+  @Command.Proxy()
+  command;
+
+  @Command.Path(`exec`, `sh`)
+  async execute() {
+    await shRun(this.service, commandArrayToString(this.command), { cwd: this.cwd });
+  }
+}
+
+// exec bash
+class ExecBashCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Container",
+    description: `execute a command using bash inside a running container`,
+    examples: [[`echo hello in postgres container`, `devker exec bash postgres echo hello`]],
+  });
+
+  @Command.String({ required: true })
+  service;
+
+  @Command.Proxy()
+  command;
+
+  @Command.Path(`exec`, `bash`)
+  async execute() {
+    await bashRun(this.service, commandArrayToString(this.command), { cwd: this.cwd });
+  }
+}
+
 // DockerComposeServiceCommand
 class DockerComposeServiceCommand extends BaseCommand {
   @Command.String("-s,--service")
@@ -139,6 +223,12 @@ class DockerComposeServiceCommand extends BaseCommand {
 
 // env init
 class InitCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Environment",
+    description: `initialize a new environment`,
+    examples: [[`initialize devker into CWD`, `devker init . --name my-app`]],
+  });
+
   @Command.String({ required: true })
   dir = undefined;
 
@@ -181,22 +271,14 @@ class InitCommand extends BaseCommand {
   }
 }
 
-// bash
-class BashCommand extends BaseCommand {
-  @Command.String({ required: true })
-  service;
-
-  @Command.Proxy()
-  command;
-
-  @Command.Path(`bash`)
-  async execute() {
-    await bashRun(this.service, this.command[0] || "", { cwd: this.cwd });
-  }
-}
-
 // docker-compose
 class DockerComposeCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Container",
+    description: `proxy for docker-compose`,
+    details: `.env files are parsed before running`,
+  });
+
   @Command.Rest()
   rest;
 
@@ -208,6 +290,11 @@ class DockerComposeCommand extends BaseCommand {
 
 // up
 class UpCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Container",
+    description: `starts the services in daemon mode`,
+  });
+
   @Command.Rest()
   rest;
 
@@ -219,6 +306,11 @@ class UpCommand extends BaseCommand {
 
 // down
 class DownCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Container",
+    description: `stops the services`,
+  });
+
   @Command.Rest()
   rest;
 
@@ -230,6 +322,11 @@ class DownCommand extends BaseCommand {
 
 // destroy
 class DestroyCommand extends BaseCommand {
+  static usage = Command.Usage({
+    category: "Container",
+    description: `stops the services and deletes volumes`,
+  });
+
   @Command.Rest()
   rest;
 
@@ -241,7 +338,6 @@ class DestroyCommand extends BaseCommand {
 
 // PostgressCommand
 class PostgresCommand extends DockerComposeServiceCommand {
-  @Command.String("-s,--service")
   service = "postgres";
 
   @Command.String("--env-prefix")
@@ -269,6 +365,11 @@ class PostgresCommand extends DockerComposeServiceCommand {
 
 // postgres psql
 class PostgresPsqlCommand extends PostgresCommand {
+  static usage = Command.Usage({
+    category: "Database",
+    description: `opens a psql shell into a running container`,
+  });
+
   @Command.String("-U,--username")
   username;
 
@@ -290,6 +391,11 @@ class PostgresPsqlCommand extends PostgresCommand {
 
 // postgres restore
 class PostgresRestoreCommand extends PostgresCommand {
+  static usage = Command.Usage({
+    category: "Database",
+    description: `wipes and restores postgres databases from dump files on a server`,
+  });
+
   @Command.Array("-d,--db")
   dbnames = [];
 
@@ -364,6 +470,11 @@ class PostgresRestoreCommand extends PostgresCommand {
 
 // postgres dump
 class PostgresDumpCommand extends PostgresCommand {
+  static usage = Command.Usage({
+    category: "Database",
+    description: `dumps postgres databases from a server into gzipped files`,
+  });
+
   @Command.Array("-d,--db")
   dbnames = [];
 
@@ -403,6 +514,11 @@ class PostgresDumpCommand extends PostgresCommand {
 
 // postgres list connections
 class PostgresListConnectionCommand extends PostgresCommand {
+  static usage = Command.Usage({
+    category: "Database",
+    description: `list postgres connections for a server`,
+  });
+
   @Command.Path(`postgres`, `list`, `connections`)
   async execute() {
     for (const connection of this.postgresEnv.connections) {
@@ -415,6 +531,11 @@ class PostgresListConnectionCommand extends PostgresCommand {
 
 // postgres kill connections
 class PostgresKillConnectionCommand extends PostgresCommand {
+  static usage = Command.Usage({
+    category: "Database",
+    description: `kills connections to a postgres server`,
+  });
+
   @Command.Path(`postgres`, `kill`, `connections`)
   async execute() {
     await postgresExecuteSql(this.service, killConnectionsSql(), this.postgresEnv.super.username, { cwd: this.cwd });
@@ -434,7 +555,8 @@ cli.register(GeneratePasswordCommand);
 cli.register(GenerateUuidCommand);
 cli.register(SshCommand);
 cli.register(InitCommand);
-cli.register(BashCommand);
+cli.register(ExecShCommand);
+cli.register(ExecBashCommand);
 cli.register(DockerComposeCommand);
 cli.register(UpCommand);
 cli.register(DownCommand);
@@ -447,6 +569,10 @@ cli.register(PostgresKillConnectionCommand);
 module.exports = { cli };
 
 // utilities
+
+async function shRun(service, cmd, options) {
+  return spawnPromise("docker-compose", ["exec", "-T", service, "sh", "-c", cmd], [], options);
+}
 
 async function bashRun(service, cmd, options) {
   return spawnPromise("docker-compose", ["exec", "-T", service, "bash", "-c", cmd], [], options);
@@ -465,7 +591,9 @@ function escapeCommand(cmd) {
 }
 
 function commandArrayToString(command, args) {
-  const commandParts = [command];
+  const commandIsArgs = args === undefined && Array.isArray(command);
+  args = commandIsArgs ? command : args;
+  const commandParts = commandIsArgs ? [] : [command];
   for (const arg of args) {
     commandParts.push(` "`);
     commandParts.push(escapeCommand(arg));
