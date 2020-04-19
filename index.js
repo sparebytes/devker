@@ -1,3 +1,4 @@
+require("dotenv-expand")(require("dotenv-flow").config());
 const { execute } = require("@yarnpkg/shell");
 const { Cli, Command } = require("clipanion");
 const fs = require("fs");
@@ -7,7 +8,6 @@ const { posix } = _path;
 const { Transform } = require("stream");
 const { capitalCase, constantCase, paramCase, snakeCase } = require("change-case");
 const uuidv4 = require("uuid/v4");
-require("dotenv-flow").config();
 
 const devkerVersion = require("./package.json").version;
 
